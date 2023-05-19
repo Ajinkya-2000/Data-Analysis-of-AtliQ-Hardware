@@ -10,3 +10,7 @@ Fiscal_yr Profit/Loss Gross_price post/pre_invoice_deductions Net_Sales Supply_C
 #### Steps Performed :
 1. Load the dataset into MySQL workbench 
 2. 
+
+
+
+note : Dataset file is large(240 mb) and I am not authorized to share that file.Thus, the file is not uploaded.
