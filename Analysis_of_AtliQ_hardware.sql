@@ -349,5 +349,134 @@ select
 from cte
 order by region , Total_Net_Sales desc;
 
-# line 5 9 6
 
+# Get top 3 product by division
+with cte3 as (
+select 
+	p.division , p.product , sum(sold_quantity) as total_qty
+from 
+fact_sales_monthly s join dim_product p
+on s.product_code = p.product_code
+where fiscal_year = 2021
+group by p.product , p.division
+) , 
+cte4 as (
+select 
+	* , 
+    dense_rank() over(partition by division order by total_qty desc) as drnk
+from cte3
+)
+select * from cte4 where drnk<= 3;
+
+# Retrieve the top 2 markets in every region by their gross sales 
+# amount in FY=2021
+with x2 as (
+select 
+	c.region , c.market , 
+    round(sum(gs.gross_price_total)/1000000 , 2) as gross_total_mln 
+from gross_sales gs join dim_customer c 
+on gs.customer_code = c.customer_code
+where gs.fiscal_year = 2021 
+group by c.region , c.market
+) ,
+x3 as (
+select 
+	* ,
+    dense_rank() over(partition by region order by gross_total_mln desc) as drnk
+from x2 
+)
+select * from x3
+where drnk <= 2 ;
+
+-- Supply Chain Management
+
+# Creating a Helper function
+create table fact_act_est 
+(
+select
+	s.date as date,
+    s.fiscal_year as fiscal_year,
+    s.product_code as product_code,
+    s.customer_code as customer_code,
+    s.sold_quantity as sold_quantity,
+    f.forecast_quantity as forecast_quantity
+from 
+fact_sales_monthly s left join fact_forecast_monthly f
+using (date, customer_code, product_code) 
+union
+select
+	s.date as date,
+    s.fiscal_year as fiscal_year,
+    s.product_code as product_code,
+    s.customer_code as customer_code,
+    s.sold_quantity as sold_quantity,
+    f.forecast_quantity as forecast_quantity
+from 
+fact_forecast_monthly f left join fact_sales_monthly s
+using (date, customer_code, product_code) 
+); 
+
+
+# Get absolute error percentage
+select 
+	customer_code,
+    sum(forecast_quantity - sold_quantity) as net_err,
+    sum(abs(forecast_quantity - sold_quantity)) as abs_err,
+    sum((forecast_quantity - sold_quantity)*100) / sum(forecast_quantity) as net_err_pct,
+    sum(abs(forecast_quantity - sold_quantity))*100 / sum(forecast_quantity)  as abs_err_pct
+from fact_act_est1
+where fiscal_year = 2021
+group by customer_code 
+order by abs_err_pct;
+
+# Get Forecast accuracy for each customer
+with forecast as (
+select 
+	customer_code , sum(sold_quantity) as sold_quantity,
+    sum(forecast_quantity) as forecast_quantity,
+    sum(forecast_quantity - sold_quantity) as net_err,
+    sum(abs(forecast_quantity - sold_quantity)) as abs_err,
+    sum((forecast_quantity - sold_quantity)*100) / sum(forecast_quantity) as net_err_pct,
+    sum(abs(forecast_quantity - sold_quantity))*100 / sum(forecast_quantity)  as abs_err_pct
+from fact_act_est1
+where fiscal_year = 2021
+group by customer_code 
+)
+select 
+	f.customer_code , f.sold_quantity , f.forecast_quantity,
+    c.customer,
+    c.market,
+    if(abs_err_pct > 100 , 0 ,100 - abs_err_pct) as forecast_accuracy 
+from forecast f join dim_customer c using(customer_code)
+order by forecast_accuracy desc ;
+
+# Temporary Tables
+# This tables can be accesed and queryed for that particular session
+create temporary table forecast_accuracy_temp
+	select 
+		customer_code , sum(sold_quantity) as sold_quantity,
+		sum(forecast_quantity) as forecast_quantity,
+		sum(forecast_quantity - sold_quantity) as net_err,
+		sum(abs(forecast_quantity - sold_quantity)) as abs_err,
+		sum((forecast_quantity - sold_quantity)*100) / sum(forecast_quantity) as net_err_pct,
+		sum(abs(forecast_quantity - sold_quantity))*100 / sum(forecast_quantity)  as abs_err_pct
+	from fact_act_est1
+	where fiscal_year = 2021
+	group by customer_code ;
+ 
+
+-- Indexes - To speed up the query performance
+# Index
+# Creating composite index
+alter table fact_sales_monthly
+add index idx_prod_cust_code (product_code asc , customer_code asc ) ;
+
+# See the indexes
+show indexes in fact_sales_monthly ;
+
+# Now for this it scanned only 36 rows as we created composite index
+# Without index it would have scanned 1436905 rows
+explain
+select * from fact_sales_monthly
+where product_code = 'A0118150101' 
+and customer_code = 70002017;
